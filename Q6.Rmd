@@ -1,0 +1,47 @@
+---
+title: "Q6"
+author: "Leon Tran"
+date: "2023-11-01"
+output: word_document
+---
+
+# Can you improve this analysis code?
+```{r}
+library(bio3d)
+s1 <- read.pdb("4AKE") # kinase with drug
+s2 <- read.pdb("1AKE") # kinase no drug
+s3 <- read.pdb("1E4Y") # kinase with drug
+s1.chainA <- trim.pdb(s1, chain="A", elety="CA")
+s2.chainA <- trim.pdb(s2, chain="A", elety="CA")
+s3.chainA <- trim.pdb(s1, chain="A", elety="CA")
+s1.b <- s1.chainA$atom$b
+s2.b <- s2.chainA$atom$b
+s3.b <- s3.chainA$atom$b
+plotb3(s1.b, sse=s1.chainA, typ="l", ylab="Bfactor")
+plotb3(s2.b, sse=s2.chainA, typ="l", ylab="Bfactor")
+plotb3(s3.b, sse=s3.chainA, typ="l", ylab="Bfactor")
+```
+
+#Q6. How would you generalize the original code above to work with any set of input protein structures?
+
+```{r}
+#loads the library 
+library(bio3d) 
+
+# puts kinases into a vector to be used later
+pdb_files <- c("4AKE", "1AKE", "1E4Y")
+
+# New function that will analyze protein drug interactions by reading any protein pdb data and outputs a plot for the specified protein
+x <- function(file) {
+  #reads protein structure from PDB file
+  protein <- read.pdb(file)
+  #trims protein structure and stores into variable
+  pdb.chainA <- trim.pdb(pdb, chain = "A", elety = "CA")
+  #extracts bfactor values and stores into variable
+  bfactor_data <- pdb.chainA$atom$b
+  #plots extracted bfactor values with given parameters 
+  plotb3(bfactor_data, sse = pdb.chainA, typ = "l", ylab = "Bfactor")
+}
+
+```
+

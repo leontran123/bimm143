@@ -1,0 +1,291 @@
+---
+title: "week13"
+author: "Leon Tran"
+date: "2023-11-23"
+output: word_document
+---
+
+## Import/Read the data from Himes et al.
+
+```{r}
+counts <- read.csv("airway_scaledcounts.csv", row.names=1)
+metadata <- read.csv("airway_metadata.csv")
+```
+
+```{r}
+head(metadata)
+```
+```{r}
+head(counts)
+```
+
+Q1. How many genes are in this dataset? 
+```{r}
+nrow(counts)
+```
+There are 38694 genes.
+
+Q2. How many ‘control’ cell lines do we have? 
+```{r}
+n.control <- sum(metadata$dex == "control")
+```
+There are 4 control cell lines.
+
+```{r}
+control <- metadata[metadata[,"dex"]=="control",]
+control.counts <- counts[ ,control$id]
+control.mean <- rowSums( control.counts )/4 
+head(control.mean)
+```
+
+## Extract and summarize the treated (i.e. drug) samples
+
+```{r}
+treated <- metadata[metadata$dex == "treated",]
+treated.counts <- counts[, treated$id]
+treated.mean <- rowMeans(treated.counts)
+```
+
+Store these results together in a new data frame called meancounts
+
+```{r}
+treated.mean <- rowMeans(treated.counts)
+meancounts <- data.frame(control.mean, treated.mean)
+```
+
+Lets make a plot to explore the results a little
+
+```{r}
+plot(meancounts[,1], meancounts[,2])
+```
+```{r}
+library(ggplot2)
+ggplot(meancounts) + aes(control.mean, treated.mean) + geom_point()
+```
+We will make a log-log plot to draw out this skewed data and see what is going on.
+```{r}
+plot(meancounts[,1], meancounts[,2], log="xy", xlab = "log control counts", ylab = "log of treated counts")
+```
+
+We often log2 transformations when dealing with this sort of data.
+
+```{r}
+log2(20/20)
+```
+
+This log2 transformation has this nice property where if there is no chagne the log2 value will be zero and if it double the log2 value will be 1 and if halved it will be -1.
+
+So lets add a log2 fold change column to our results so far
+
+```{r}
+meancounts$log2fc <- log2(meancounts$treated.mean / meancounts$control.mean)
+```
+
+```{r}
+head(meancounts)
+```
+
+We need to get rid of zero count genes that we can not say anything about
+
+```{r}
+zero.vals <- which(meancounts[,1:2]==0, arr.ind = TRUE)
+to.rm <- unique(zero.vals[,1])
+mycounts <- meancounts[-to.rm,]
+head(mycounts)
+```
+
+How many genes are remaining?
+
+```{r}
+nrow(mycounts)
+```
+
+#Use fold change to see up and down regualted genes. 
+
+A common threshold used for calling something differentially expressed is a log2(FoldChange) of greater than 2 or less than -2. Let’s filter the dataset both ways to see how many genes are up or down-regulated.
+
+```{r}
+sum(mycounts$log2fc > 2 )
+```
+
+and down regulated 
+```{r}
+sum(mycounts$log2fc > -2 )
+```
+
+Do we trust these results? Well not fully because we don't yet know if these changes are significant...
+
+## DESeq2 analysis 
+
+Let’s do this the right way. DESeq2 is an R package specifically for analyzing count-based NGS data like RNA-seq. 
+
+```{r}
+# load up DESeq2
+library(DESeq2)
+
+dds <- DESeqDataSetFromMatrix(countData=counts, 
+                              colData=metadata, 
+                              design=~dex)
+dds
+```
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+plotPCA(vsd, intgroup = c("dex"))
+```
+
+```{r}
+pcaData <- plotPCA(vsd, intgroup=c("dex"), returnData=TRUE)
+head(pcaData)
+```
+
+```{r}
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+percentVar
+```
+
+```{r}
+ggplot(pcaData) +
+  aes(x = PC1, y = PC2, color = dex) +
+  geom_point(size =3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  theme_bw()
+```
+
+```{r}
+dds <- DESeq(dds)
+results(dds)
+```
+
+```{r}
+res <- results(dds)
+res
+```
+
+```{r}
+summary(res)
+```
+
+```{r}
+res05 <- results(dds, alpha=0.05)
+summary(res05)
+```
+
+```{r}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+```
+
+```{r}
+columns(org.Hs.eg.db)
+```
+
+```{r}
+res$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res), 
+                     # Our genenames
+                     keytype="ENSEMBL",       
+                     # The format of our genenames
+                     column="SYMBOL",          
+                     # The new format we want to add
+                     multiVals="first")
+
+head(res)
+```
+
+```{r}
+ord <- order( res$padj )
+#View(res[ord,])
+head(res[ord,])
+```
+
+```{r}
+write.csv(res[ord,], "deseq_results.csv")
+```
+
+```{r}
+plot( res$log2FoldChange,  -log(res$padj), 
+      xlab="Log2(FoldChange)",
+      ylab="-Log(P-value)")
+```
+
+```{r}
+plot( res$log2FoldChange,  -log(res$padj), 
+ ylab="-Log(P-value)", xlab="Log2(FoldChange)")
+
+# Add some cut-off lines
+abline(v=c(-2,2), col="darkgray", lty=2)
+abline(h=-log(0.05), col="darkgray", lty=2)
+```
+
+```{r}
+# Setup our custom point color vector 
+mycols <- rep("gray", nrow(res))
+mycols[ abs(res$log2FoldChange) > 2 ]  <- "red" 
+
+inds <- (res$padj < 0.01) & (abs(res$log2FoldChange) > 2 )
+mycols[ inds ] <- "blue"
+
+# Volcano plot with custom colors 
+plot( res$log2FoldChange,  -log(res$padj), 
+ col=mycols, ylab="-Log(P-value)", xlab="Log2(FoldChange)" )
+
+# Cut-off lines
+abline(v=c(-2,2), col="gray", lty=2)
+abline(h=-log(0.1), col="gray", lty=2)
+
+```
+
+```{r}
+BiocManager::install("EnhancedVolcano")
+
+library(EnhancedVolcano)
+
+x <- as.data.frame(res)
+
+EnhancedVolcano(x,
+    lab = x$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue')
+```
+
+```{r}
+library(pathview)
+library(gage)
+library(gageData)
+
+data(kegg.sets.hs)
+
+# Examine the first 2 pathways in this kegg set for humans
+head(kegg.sets.hs, 2)
+```
+
+```{r}
+foldchanges = res$log2FoldChange
+names(foldchanges) = res$entrez
+head(foldchanges)
+```
+
+```{r}
+keggres = gage(foldchanges, gsets=kegg.sets.hs)
+```
+
+```{r}
+attributes(keggres)
+```
+
+```{r}
+head(keggres$less, 3)
+```
+
+```{r}
+pathview(gene.data=foldchanges, pathway.id="hsa05310")
+```
+
+```{r}
+pathview(gene.data=foldchanges, pathway.id="hsa05310", kegg.native=FALSE)
+
+```
+
